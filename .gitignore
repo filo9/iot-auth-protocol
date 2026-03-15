@@ -1,0 +1,27 @@
+# 编译输出目录
+build/
+bin/
+
+# 编译产生的中间文件和可执行文件
+*.o
+*.out
+test_crypto
+test_bio
+test_protocol_flow
+
+# VS Code 配置文件（可选，通常不传）
+.vscode/
+
+# 操作系统生成文件
+.DS_Store
+*.zip
+*.pdf
+*.docx
+arcface_model/
+fvc2002_db1/
+contact_minutiae/
+fingerprint_features/
+server_data.db
+arcface_model/
+buffalo_l.zip
+*.onnx
