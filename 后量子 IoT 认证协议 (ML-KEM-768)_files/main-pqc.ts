@@ -1,0 +1,10 @@
+import { createApp } from "/node_modules/.vite/deps/vue.js?v=421da456";
+import AppPQC from "/src/AppPQC.vue";
+import ElementPlus from "/node_modules/.vite/deps/element-plus.js?v=421da456";
+import "/node_modules/element-plus/dist/index.css";
+import "/node_modules/element-plus/theme-chalk/dark/css-vars.css";
+const app = createApp(AppPQC);
+app.use(ElementPlus);
+app.mount("#app");
+
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIm1haW4tcHFjLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCB7IGNyZWF0ZUFwcCB9IGZyb20gJ3Z1ZSdcbmltcG9ydCBBcHBQUUMgZnJvbSAnLi9BcHBQUUMudnVlJ1xuaW1wb3J0IEVsZW1lbnRQbHVzIGZyb20gJ2VsZW1lbnQtcGx1cydcbmltcG9ydCAnZWxlbWVudC1wbHVzL2Rpc3QvaW5kZXguY3NzJ1xuaW1wb3J0ICdlbGVtZW50LXBsdXMvdGhlbWUtY2hhbGsvZGFyay9jc3MtdmFycy5jc3MnXG5cbmNvbnN0IGFwcCA9IGNyZWF0ZUFwcChBcHBQUUMpXG5hcHAudXNlKEVsZW1lbnRQbHVzKVxuYXBwLm1vdW50KCcjYXBwJylcbiJdLCJtYXBwaW5ncyI6IkFBQUEsU0FBUyxpQkFBaUI7QUFDMUIsT0FBTyxZQUFZO0FBQ25CLE9BQU8saUJBQWlCO0FBQ3hCLE9BQU87QUFDUCxPQUFPO0FBRVAsTUFBTSxNQUFNLFVBQVUsTUFBTTtBQUM1QixJQUFJLElBQUksV0FBVztBQUNuQixJQUFJLE1BQU0sTUFBTTsiLCJuYW1lcyI6W119
