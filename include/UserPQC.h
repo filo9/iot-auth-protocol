@@ -57,6 +57,8 @@ private:
     // 认证过程中的临时状态
     CryptoModule::Bytes m_kemCiphertext;   // KEM 密文 ct (替代 m_tempDH)
     CryptoModule::Bytes m_peerKEMPub;      // 服务器的 pk_KEM (替代 m_peerDHPub)
+    uint64_t m_timestamp;
+    CryptoModule::Bytes m_nonce;
     SecureBytes m_sharedSecret;
     CryptoModule::Bytes m_serverSigM;
     SecureBytes m_sessionKey;

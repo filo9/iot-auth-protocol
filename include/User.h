@@ -63,6 +63,8 @@ private:
     // 认证过程中的临时会话状态（敏感数据使用 SecureBytes 自动擦除）
     CryptoModule::KeyPair m_tempDH;
     CryptoModule::Bytes m_peerDHPub;
+    uint64_t m_timestamp;
+    CryptoModule::Bytes m_nonce;
     SecureBytes m_sharedSecret;
     CryptoModule::Bytes m_serverSigM;
     SecureBytes m_sessionKey;

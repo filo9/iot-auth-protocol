@@ -88,7 +88,8 @@ ProtocolMessagesPQC::PQCAuthResponse UserPQC::ProcessAuthChallenge(
     // 保存上下文
     m_peerKEMPub = challenge.pkKEM;
     m_serverSigM = challenge.serversigm;
-
+    m_timestamp = challenge.timestamp;
+    m_nonce = challenge.nonce;
     // 3. 恢复生物特征 R
     CryptoModule::Bytes R = BioModule::Rep(currentBiometric, m_ask.P);
     if (R.empty()) {
@@ -119,10 +120,18 @@ ProtocolMessagesPQC::PQCAuthResponse UserPQC::ProcessAuthChallenge(
     m_sharedSecret = kemResult.sharedSecret;
 
     // 7. 生成用户确认标签
-    // tagU = H(shared_secret || uid || pk_KEM || server_sigm || ct || "clientconfirm")
+    // tagU = H(shared_secret || uid || pk_KEM || timestamp || nonce_S || server_sigm || ct || "clientconfirm")
     CryptoModule::Bytes tagInput = m_sharedSecret;
     tagInput.insert(tagInput.end(), m_uid.begin(), m_uid.end());
     tagInput.insert(tagInput.end(), challenge.pkKEM.begin(), challenge.pkKEM.end());
+
+    // 将 timestamp 按大端序序列化为 8 字节加入
+    for (int i = 7; i >= 0; --i) {
+        tagInput.push_back(static_cast<uint8_t>((challenge.timestamp >> (i * 8)) & 0xFF));
+    }
+    // 加入 nonce_S
+    tagInput.insert(tagInput.end(), challenge.nonce.begin(), challenge.nonce.end());
+
     tagInput.insert(tagInput.end(), challenge.serversigm.begin(), challenge.serversigm.end());
     tagInput.insert(tagInput.end(), m_kemCiphertext.begin(), m_kemCiphertext.end());
     std::string confirmStr = "clientconfirm";
@@ -175,16 +184,25 @@ bool UserPQC::FinalizeAuthentication(const ProtocolMessagesPQC::PQCAuthConfirmat
         throw std::runtime_error("[PQC] Server confirmation signature invalid!");
     }
 
-    // 2. 验证 tagS = H(shared_secret || uid || tau || pk_KEM || tagU || "serverconfirm")
+    // 2. 本地计算期望的 tagS 以比对验证
+    // 协议规范: tagS = H(sharedsecret || uid || tau || dhpubS || timestamp || nonce || tagU || "serverconfirm")
     CryptoModule::Bytes expectedTagSInput = m_sharedSecret;
     expectedTagSInput.insert(expectedTagSInput.end(), m_uid.begin(), m_uid.end());
     expectedTagSInput.insert(expectedTagSInput.end(), m_tau.begin(), m_tau.end());
-    expectedTagSInput.insert(expectedTagSInput.end(), m_peerKEMPub.begin(), m_peerKEMPub.end());
+    expectedTagSInput.insert(expectedTagSInput.end(), m_peerKEMPub.begin(), m_peerKEMPub.end()); 
+
+    // --- 新增：大端序加入 timestamp ---
+    for (int i = 7; i >= 0; --i) {
+        expectedTagSInput.push_back(static_cast<uint8_t>((m_timestamp >> (i * 8)) & 0xFF));
+    }
+    // --- 新增：加入 nonce_S ---
+    expectedTagSInput.insert(expectedTagSInput.end(), m_nonce.begin(), m_nonce.end());
+
     expectedTagSInput.insert(expectedTagSInput.end(), m_tagU.begin(), m_tagU.end());
     std::string serverConfirmStr = "serverconfirm";
     expectedTagSInput.insert(expectedTagSInput.end(), serverConfirmStr.begin(), serverConfirmStr.end());
-
-    CryptoModule::Bytes expectedTagS = CryptoModulePQC::Hash(expectedTagSInput);
+    
+    CryptoModule::Bytes expectedTagS = CryptoModule::Hash(expectedTagSInput);
     if (expectedTagS != confirmation.tagS) {
         throw std::runtime_error("[PQC] Server tagS mismatch! Bidirectional authentication failed.");
     }

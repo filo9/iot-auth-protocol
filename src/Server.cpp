@@ -225,7 +225,8 @@ ProtocolMessages::AuthChallenge Server::GenerateAuthChallenge(const std::string&
     if (RAND_bytes(nonce.data(), nonce.size()) != 1) {
         throw std::runtime_error("Failed to generate nonce");
     }
-
+    session.timestamp = timestamp;
+    session.nonce = nonce;
     // 签名内容：dhpubS || timestamp || nonce
     CryptoModule::Bytes sigInput = session.tempDH.publicKey;
     // 将 timestamp 按大端序序列化为 8 字节
@@ -370,6 +371,14 @@ ProtocolMessages::AuthConfirmation Server::ProcessAuthResponse(const ProtocolMes
     CryptoModule::Bytes expectedTagUInput = session.sharedSecret;
     expectedTagUInput.insert(expectedTagUInput.end(), resp.uid.begin(), resp.uid.end());
     expectedTagUInput.insert(expectedTagUInput.end(), session.tempDH.publicKey.begin(), session.tempDH.publicKey.end());
+    
+    // 提取 Session 中保存的 timestamp 并按大端序加入
+    for (int i = 7; i >= 0; --i) {
+        expectedTagUInput.push_back(static_cast<uint8_t>((session.timestamp >> (i * 8)) & 0xFF));
+    }
+    // 提取 Session 中保存的 nonce 加入
+    expectedTagUInput.insert(expectedTagUInput.end(), session.nonce.begin(), session.nonce.end());
+    
     expectedTagUInput.insert(expectedTagUInput.end(), session.serversigm.begin(), session.serversigm.end());
     expectedTagUInput.insert(expectedTagUInput.end(), dhpubU.begin(), dhpubU.end());
     std::string confirmStr = "clientconfirm";
@@ -384,9 +393,11 @@ ProtocolMessages::AuthConfirmation Server::ProcessAuthResponse(const ProtocolMes
     auditMsg4 += "1. SharedSecret: " + ToHex(session.sharedSecret).substr(0, 16) + "...\n";
     auditMsg4 += "2. uid: " + resp.uid + "\n";
     auditMsg4 += "3. dhpubS: " + ToHex(session.tempDH.publicKey).substr(0, 16) + "...\n";
-    auditMsg4 += "4. serversigm: " + ToHex(session.serversigm).substr(0, 16) + "...\n";
-    auditMsg4 += "5. dhpubU: " + ToHex(dhpubU).substr(0, 16) + "...\n";
-    auditMsg4 += "6. 常量: 'clientconfirm'\n\n";
+    auditMsg4 += "4. timestamp: " + std::to_string(session.timestamp) + "\n";       // <--- 新增
+    auditMsg4 += "5. nonce_S: " + ToHex(session.nonce) + "\n";                     // <--- 新增
+    auditMsg4 += "6. serversigm: " + ToHex(session.serversigm).substr(0, 16) + "...\n";
+    auditMsg4 += "7. dhpubU: " + ToHex(dhpubU).substr(0, 16) + "...\n";
+    auditMsg4 += "8. 常量: 'clientconfirm'\n\n";
     auditMsg4 += "网关本地计算出的 tagU:\n" + ToHex(expectedTagU) + "\n\n";
     auditMsg4 += "✅ 比对结果：与终端上传的 tagU 完美匹配！";
     BroadcastToMonitor("success", "✅ 5. 终端确认标签 tagU 匹配通过", auditMsg4);
@@ -420,6 +431,14 @@ ProtocolMessages::AuthConfirmation Server::ProcessAuthResponse(const ProtocolMes
     tagSInput.insert(tagSInput.end(), resp.uid.begin(), resp.uid.end());
     tagSInput.insert(tagSInput.end(), resp.tau.begin(), resp.tau.end());
     tagSInput.insert(tagSInput.end(), session.tempDH.publicKey.begin(), session.tempDH.publicKey.end());
+    
+    // --- 新增：大端序加入 timestamp ---
+    for (int i = 7; i >= 0; --i) {
+        tagSInput.push_back(static_cast<uint8_t>((session.timestamp >> (i * 8)) & 0xFF));
+    }
+    // --- 新增：加入 nonce_S ---
+    tagSInput.insert(tagSInput.end(), session.nonce.begin(), session.nonce.end());
+
     tagSInput.insert(tagSInput.end(), resp.tagU.begin(), resp.tagU.end());
     std::string serverConfirmStr = "serverconfirm";
     tagSInput.insert(tagSInput.end(), serverConfirmStr.begin(), serverConfirmStr.end());
@@ -433,12 +452,13 @@ ProtocolMessages::AuthConfirmation Server::ProcessAuthResponse(const ProtocolMes
     auditMsg5 += "2. uid: " + resp.uid + "\n";
     auditMsg5 += "3. tau (密文): " + ToHex(resp.tau).substr(0, 16) + "...\n";
     auditMsg5 += "4. dhpubS: " + ToHex(session.tempDH.publicKey).substr(0, 16) + "...\n";
-    auditMsg5 += "5. tagU: " + ToHex(resp.tagU).substr(0, 16) + "...\n";
-    auditMsg5 += "6. 常量: 'serverconfirm'\n\n";
+    auditMsg5 += "5. timestamp: " + std::to_string(session.timestamp) + "\n";       // <--- 新增
+    auditMsg5 += "6. nonce_S: " + ToHex(session.nonce) + "\n";                     // <--- 新增
+    auditMsg5 += "7. tagU: " + ToHex(resp.tagU).substr(0, 16) + "...\n";
+    auditMsg5 += "8. 常量: 'serverconfirm'\n\n";
     auditMsg5 += "【生成网关确认标签 tagS】:\n" + ToHex(confirmation.tagS) + "\n\n";
     auditMsg5 += "【网关最终签名 serversigtag】:\n" + ToHex(confirmation.serversigtag);
     BroadcastToMonitor("crypto", "🏷️ 6. 签发网关反向确认参数", auditMsg5);
-
     // 认证成功：重置失败计数器
     m_failureRecords.erase(resp.uid);
     m_perfMetrics.successAuthCount++;

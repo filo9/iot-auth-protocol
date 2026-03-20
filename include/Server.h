@@ -55,6 +55,8 @@ struct UserRecord {
 struct AuthSession {
     CryptoModule::KeyPair tempDH;     // 服务器的临时 DH 密钥对 (dhprivS, dhpubS)
     CryptoModule::Bytes serversigm;   // 服务器对 DH 公钥的签名
+    uint64_t timestamp;               // 挑战下发时的时间戳
+    CryptoModule::Bytes nonce;        // 挑战下发时的服务器随机数
     SecureBytes sharedSecret;         // 协商出的共享秘密（安全擦除）
     SecureBytes sessionKey;           // 最终派生的会话密钥（安全擦除）
     SecureRecordLayer secureLayer;

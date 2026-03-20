@@ -125,7 +125,8 @@ ProtocolMessages::AuthResponse User::ProcessAuthChallenge(
 
     m_peerDHPub = challenge.dhpubS;
     m_serverSigM = challenge.serversigm;
-
+    m_timestamp = challenge.timestamp;
+    m_nonce = challenge.nonce;
     // ==========================================
     // 1. 尝试解包硬件 PUF 凭证
     // ==========================================
@@ -204,6 +205,13 @@ ProtocolMessages::AuthResponse User::ProcessAuthChallenge(
     CryptoModule::Bytes tagInput = m_sharedSecret;
     tagInput.insert(tagInput.end(), m_uid.begin(), m_uid.end());
     tagInput.insert(tagInput.end(), challenge.dhpubS.begin(), challenge.dhpubS.end());
+    // --- 新增：大端序压入时间戳 ---
+    for (int i = 7; i >= 0; --i) {
+        tagInput.push_back(static_cast<uint8_t>((challenge.timestamp >> (i * 8)) & 0xFF));
+    }
+    // --- 新增：压入随机数 ---
+    tagInput.insert(tagInput.end(), challenge.nonce.begin(), challenge.nonce.end());
+    // ---------------------------------
     tagInput.insert(tagInput.end(), challenge.serversigm.begin(), challenge.serversigm.end());
     tagInput.insert(tagInput.end(), m_tempDH.publicKey.begin(), m_tempDH.publicKey.end());
     std::string confirmStr = "clientconfirm";
@@ -277,6 +285,15 @@ bool User::FinalizeAuthentication(const ProtocolMessages::AuthConfirmation& conf
     tagSInput.insert(tagSInput.end(), m_uid.begin(), m_uid.end());
     tagSInput.insert(tagSInput.end(), m_tau.begin(), m_tau.end());
     tagSInput.insert(tagSInput.end(), m_peerDHPub.begin(), m_peerDHPub.end()); // peerDHPub 就是服务端的 dhpubS
+    
+    // --- 新增：大端序压入暂存的时间戳 ---
+    for (int i = 7; i >= 0; --i) {
+        tagSInput.push_back(static_cast<uint8_t>((m_timestamp >> (i * 8)) & 0xFF));
+    }
+    // --- 新增：压入暂存的随机数 ---
+    tagSInput.insert(tagSInput.end(), m_nonce.begin(), m_nonce.end());
+    // ---------------------------------
+
     tagSInput.insert(tagSInput.end(), m_tagU.begin(), m_tagU.end());
     std::string serverConfirmStr = "serverconfirm";
     tagSInput.insert(tagSInput.end(), serverConfirmStr.begin(), serverConfirmStr.end());

@@ -54,6 +54,8 @@ struct PQCPerformanceMetrics {
 struct PQCAuthSession {
     CryptoModulePQC::KEMKeyPair tempKEM;     // 服务器的临时 ML-KEM 密钥对
     CryptoModule::Bytes serversigm;           // 服务器对 pk_KEM 的签名
+    uint64_t timestamp;                      // 挑战下发时的时间戳
+    CryptoModule::Bytes nonce;               // 挑战下发时的服务器随机数
     SecureBytes sharedSecret;
     SecureBytes sessionKey;
     SecureRecordLayer secureLayer;

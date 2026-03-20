@@ -70,7 +70,8 @@ private:
     //保存客户端生成的包，供最后一步验证服务器 tagS 使用
     CryptoModule::Bytes m_tau;
     CryptoModule::Bytes m_tagU;
-    
+    uint64_t m_timestamp;
+    CryptoModule::Bytes m_nonce;
     // ==========================================
     // 模拟获取安卓设备底层硬件指纹 (Hardware-bound ID)
     // ==========================================

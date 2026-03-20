@@ -204,7 +204,8 @@ ProtocolMessagesPQC::PQCAuthChallenge ServerPQC::GenerateAuthChallenge(const std
     // 随机 nonce
     CryptoModule::Bytes nonce(16);
     RAND_bytes(nonce.data(), nonce.size());
-
+    session.timestamp = timestamp;
+    session.nonce = nonce;
     // 签名: Sign(sk_server, pk_KEM)  — 注意这里签的是 pk_KEM 而非 dhpubS
     auto t_sign_start = std::chrono::high_resolution_clock::now();
     session.serversigm = CryptoModulePQC::Sign(m_longTermKeys.privateKey, session.tempKEM.publicKey);
@@ -276,6 +277,11 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
     if (sessionIt == m_activeSessions.end()) return confirmation;
     PQCAuthSession& session = sessionIt->second;
 
+    std::string auditMsg1 = "【密文包裹 tau】:\n" + ToHexPQC(resp.tau).substr(0, 64) + "...\n\n";
+    auditMsg1 += "【确认标签 tagU】:\n" + ToHexPQC(resp.tagU) + "\n\n";
+    auditMsg1 += "⚠️ 准备使用数据库存储的 sk_Enc 解密 tau。";
+    BroadcastToMonitorPQC("warning", "📥 1. [PQC] 收到终端认证挑战响应", auditMsg1);
+
     // 解密 tau: (sigma, ct) <- Dec(skEnc, tau)
     auto t_dec_start = std::chrono::high_resolution_clock::now();
     CryptoModule::Bytes decrypted = CryptoModulePQC::Decrypt(db_skEnc, resp.tau);
@@ -293,6 +299,10 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
     CryptoModule::Bytes sigma(decrypted.begin() + 4, decrypted.begin() + 4 + sigLen);
     CryptoModule::Bytes ct(decrypted.begin() + 4 + sigLen, decrypted.end());
 
+    std::string auditMsg2 = "✅ AEAD 解密成功 (验证终端加密密钥合法)！\n\n";
+    auditMsg2 += "【提取出 KEM 密文 ct】:\n" + ToHexPQC(ct).substr(0, 64) + "...\n\n";
+    auditMsg2 += "【提取出终端 ECDSA 签名 sigma】:\n" + ToHexPQC(sigma).substr(0, 64) + "...";
+    BroadcastToMonitorPQC("success", "🔓 2. [PQC] tau 解密与数据分离", auditMsg2);
     // 验证用户签名: Verify(pkSig, (uid, pk_KEM, ct, tagU), sigma)
     CryptoModule::Bytes sigData(resp.uid.begin(), resp.uid.end());
     sigData.insert(sigData.end(), session.tempKEM.publicKey.begin(), session.tempKEM.publicKey.end());
@@ -310,16 +320,29 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
         throw std::runtime_error("[PQC] User signature verification failed!");
     }
 
+    std::string auditMsg3 = "签名原文公式: uid || pk_KEM || ct || tagU\n\n";
+    auditMsg3 += "💡 网关并不拥有用户私钥，而是提取注册时绑定的公钥进行非对称验签。\n\n";
+    auditMsg3 += "【使用的验证公钥 pk_Sig】:\n" + ToHexPQC(db_pkSig).substr(0, 64) + "...";
+    BroadcastToMonitorPQC("success", "✍️ 3. [PQC] 终端 ECDSA 签名验证通过", auditMsg3);
     // ML-KEM 解封装: shared_secret <- Decaps(sk_KEM, ct)
     auto t_decaps_start = std::chrono::high_resolution_clock::now();
     session.sharedSecret = CryptoModulePQC::KEM_Decaps(session.tempKEM.secretKey, ct);
     auto t_decaps_end = std::chrono::high_resolution_clock::now();
     m_perfMetrics.kemDecapsTime = std::chrono::duration<double, std::micro>(t_decaps_end - t_decaps_start).count();
 
-    // 验证 tagU = H(shared_secret || uid || pk_KEM || server_sigm || ct || "clientconfirm")
+    BroadcastToMonitorPQC("crypto", "🔑 4. [PQC] 执行 ML-KEM 解封装", "公式: KEM.Decaps(网关临时私钥 sk_KEM, 终端密文 ct)\n\n【恢复出的 SharedSecret】:\n" + ToHexPQC(session.sharedSecret));
+    // 验证 tagU = H(shared_secret || uid || pk_KEM || timestamp || nonce_S || server_sigm || ct || "clientconfirm")
     CryptoModule::Bytes tagInput = session.sharedSecret;
     tagInput.insert(tagInput.end(), resp.uid.begin(), resp.uid.end());
     tagInput.insert(tagInput.end(), session.tempKEM.publicKey.begin(), session.tempKEM.publicKey.end());
+
+    // 大端序加入 timestamp
+    for (int i = 7; i >= 0; --i) {
+        tagInput.push_back(static_cast<uint8_t>((session.timestamp >> (i * 8)) & 0xFF));
+    }
+    // 加入 nonce_S
+    tagInput.insert(tagInput.end(), session.nonce.begin(), session.nonce.end());
+
     tagInput.insert(tagInput.end(), session.serversigm.begin(), session.serversigm.end());
     tagInput.insert(tagInput.end(), ct.begin(), ct.end());
     std::string confirmStr = "clientconfirm";
@@ -331,7 +354,18 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
         BroadcastToMonitorPQC("error", "PQC TagU Mismatch", "Client confirmation tag verification failed");
         throw std::runtime_error("[PQC] tagU verification failed!");
     }
-
+    std::string auditMsg4 = "tagU 组成部分:\n";
+    auditMsg4 += "1. SharedSecret: " + ToHexPQC(session.sharedSecret).substr(0, 16) + "...\n";
+    auditMsg4 += "2. uid: " + resp.uid + "\n";
+    auditMsg4 += "3. pk_KEM: " + ToHexPQC(session.tempKEM.publicKey).substr(0, 16) + "...\n";
+    auditMsg4 += "4. timestamp: " + std::to_string(session.timestamp) + "\n";
+    auditMsg4 += "5. nonce_S: " + ToHexPQC(session.nonce) + "\n";
+    auditMsg4 += "6. serversigm: " + ToHexPQC(session.serversigm).substr(0, 16) + "...\n";
+    auditMsg4 += "7. ct: " + ToHexPQC(ct).substr(0, 16) + "...\n";
+    auditMsg4 += "8. 常量: 'clientconfirm'\n\n";
+    auditMsg4 += "网关本地计算出的 tagU:\n" + ToHexPQC(expectedTagU) + "\n\n";
+    auditMsg4 += "✅ 比对结果：与终端上传的 tagU 完美匹配！";
+    BroadcastToMonitorPQC("success", "✅ 5. [PQC] 终端确认标签 tagU 匹配通过", auditMsg4);
     // HKDF 双向密钥派生: salt = pk_KEM || ct (替代 dhpubS || dhpubU)
     auto t_hkdf_start = std::chrono::high_resolution_clock::now();
     CryptoModule::Bytes hkdfSalt = session.tempKEM.publicKey;
@@ -353,11 +387,19 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
     // 初始化安全记录层
     session.secureLayer.Initialize(s2cKey, c2sKey);
 
-    // 生成 tagS = H(shared_secret || uid || tau || pk_KEM || tagU || "serverconfirm")
+    // 生成 tagS = H(shared_secret || uid || tau || pk_KEM || timestamp || nonce || tagU || "serverconfirm")
     CryptoModule::Bytes tagSInput = session.sharedSecret;
     tagSInput.insert(tagSInput.end(), resp.uid.begin(), resp.uid.end());
     tagSInput.insert(tagSInput.end(), resp.tau.begin(), resp.tau.end());
     tagSInput.insert(tagSInput.end(), session.tempKEM.publicKey.begin(), session.tempKEM.publicKey.end());
+
+    // --- 新增：大端序加入 timestamp ---
+    for (int i = 7; i >= 0; --i) {
+        tagSInput.push_back(static_cast<uint8_t>((session.timestamp >> (i * 8)) & 0xFF));
+    }
+    // --- 新增：加入 nonce_S ---
+    tagSInput.insert(tagSInput.end(), session.nonce.begin(), session.nonce.end());
+
     tagSInput.insert(tagSInput.end(), resp.tagU.begin(), resp.tagU.end());
     std::string serverConfirmStr = "serverconfirm";
     tagSInput.insert(tagSInput.end(), serverConfirmStr.begin(), serverConfirmStr.end());
@@ -377,7 +419,18 @@ ProtocolMessagesPQC::PQCAuthConfirmation ServerPQC::ProcessAuthResponse(
     confirmation.success = true;
     confirmation.tagS = tagS;
     confirmation.serversigtag = serversigtag;
-
+    std::string auditMsg5 = "tagS 组成部分:\n";
+    auditMsg5 += "1. SharedSecret: " + ToHexPQC(session.sharedSecret).substr(0, 16) + "...\n";
+    auditMsg5 += "2. uid: " + resp.uid + "\n";
+    auditMsg5 += "3. tau (密文): " + ToHexPQC(resp.tau).substr(0, 16) + "...\n";
+    auditMsg5 += "4. pk_KEM: " + ToHexPQC(session.tempKEM.publicKey).substr(0, 16) + "...\n";
+    auditMsg5 += "5. timestamp: " + std::to_string(session.timestamp) + "\n";
+    auditMsg5 += "6. nonce_S: " + ToHexPQC(session.nonce) + "\n";
+    auditMsg5 += "7. tagU: " + ToHexPQC(resp.tagU).substr(0, 16) + "...\n";
+    auditMsg5 += "8. 常量: 'serverconfirm'\n\n";
+    auditMsg5 += "【生成网关确认标签 tagS】:\n" + ToHexPQC(tagS) + "\n\n";
+    auditMsg5 += "【网关最终签名 serversigtag】:\n" + ToHexPQC(serversigtag).substr(0, 64) + "...";
+    BroadcastToMonitorPQC("crypto", "🏷️ 6. [PQC] 签发网关反向确认参数", auditMsg5);
     BroadcastToMonitorPQC("success", "PQC Auth Success",
         "ML-KEM-768 mutual authentication completed for " + resp.uid +
         "\nKEM KeyGen: " + std::to_string(m_perfMetrics.kemKeyGenTime) + " us" +
